@@ -29,3 +29,7 @@ android {
         buildConfig = true
     }
 }
+
+dependencies {
+    implementation("net.volcanomobile.fluidsynth-android:fluidsynth-android:2.4.6")
+}
