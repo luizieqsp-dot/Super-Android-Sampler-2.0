@@ -27,7 +27,7 @@ android {
 
     buildFeatures {
         buildConfig = true
-    prefab = true
+        prefab = true
 }
 }
 
