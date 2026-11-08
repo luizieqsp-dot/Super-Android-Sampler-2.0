@@ -19,18 +19,21 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.9
+          gradle-version: '8.9'
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
       - name: Instalar Android SDK 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Compilar APK
         run: gradle assembleDebug
