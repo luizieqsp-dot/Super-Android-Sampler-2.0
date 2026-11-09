@@ -37,6 +37,14 @@ class MainActivity : Activity() {
     private external fun nativeRenderAudio(output: ShortArray, frames: Int): Boolean
     private external fun nativeClose()
 
+    private external fun nativeGetPresets(): Array<String>
+
+private external fun nativeSelectPreset(
+    channel: Int,
+    bank: Int,
+    program: Int
+): Boolean
+
     private var audioTrack: AudioTrack? = null
     private var audioThread: Thread? = null
     private var audioRunning = false
