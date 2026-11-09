@@ -1,3 +1,4 @@
+
 package com.samplers.android
 
 import android.app.Activity
@@ -10,24 +11,29 @@ import android.widget.TextView
 
 class MainActivity : Activity() {
 
+    companion object {
+        init {
+            System.loadLibrary("fluidsynth_bridge")
+        }
+    }
+
+    private external fun nativeFluidSynthVersion(): String
+
     private val backgroundColor = Color.rgb(18, 20, 28)
     private val accentColor = Color.rgb(91, 110, 245)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Configuração das cores da barra de estado e navegação
         window.statusBarColor = backgroundColor
         window.navigationBarColor = backgroundColor
 
-        // Layout Principal Vertical
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 24, 24, 24)
             setBackgroundColor(backgroundColor)
         }
 
-        // Título Principal
         val title = TextView(this).apply {
             text = "ANDROID SAMPLER 2.0"
             textSize = 25f
@@ -36,7 +42,6 @@ class MainActivity : Activity() {
         }
         layout.addView(title)
 
-        // Subtítulo
         val subtitle = TextView(this).apply {
             text = "PROFESSIONAL SOUND ENGINE"
             textSize = 14f
@@ -46,18 +51,16 @@ class MainActivity : Activity() {
         }
         layout.addView(subtitle)
 
-        // Botões do Menu
         addButton(layout, "INSTRUMENT LIBRARY")
         addButton(layout, "VIRTUAL KEYBOARD - 88 KEYS")
         addButton(layout, "MIXER & EFFECTS")
         addButton(layout, "PRESETS")
         addButton(layout, "MIDI SETTINGS")
 
-        // Mensagem de Estado
         val status = TextView(this).apply {
-            text = "AUDIO ENGINE: NOT CONNECTED"
+            text = "FLUIDSYNTH: ${nativeFluidSynthVersion()}"
             textSize = 13f
-            setTextColor(Color.YELLOW)
+            setTextColor(Color.GREEN)
             gravity = Gravity.CENTER
             setPadding(0, 35, 0, 0)
         }
@@ -66,7 +69,6 @@ class MainActivity : Activity() {
         setContentView(layout)
     }
 
-    // Função auxiliar para criar e adicionar botões
     private fun addButton(layout: LinearLayout, label: String) {
         val button = Button(this).apply {
             text = label
