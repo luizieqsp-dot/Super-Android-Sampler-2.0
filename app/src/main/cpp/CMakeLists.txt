@@ -9,9 +9,9 @@ add_library(
     fluidsynth_bridge.cpp
 )
 
-find_package(fluidsynth REQUIRED CONFIG)
+find_package(fluidsynth-android REQUIRED CONFIG)
 
 target_link_libraries(
     fluidsynth_bridge
-    fluidsynth::fluidsynth
+    fluidsynth-android::fluidsynth
 )
