@@ -10,7 +10,9 @@ import android.media.AudioTrack
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.ViewGroup
 import android.widget.Button
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.File
@@ -30,21 +32,16 @@ class MainActivity : Activity() {
     private external fun nativeFluidSynthVersion(): String
     private external fun nativeInit(sampleRate: Int): Boolean
     private external fun nativeLoadSoundFont(path: String): Int
-    private external fun nativeNoteOn(
-        channel: Int, key: Int, velocity: Int
-    ): Boolean
-    private external fun nativeNoteOff(
-        channel: Int, key: Int
-    ): Boolean
-    private external fun nativeRenderAudio(
-        output: ShortArray, frames: Int
-    ): Boolean
+    private external fun nativeNoteOn(channel: Int, key: Int, velocity: Int): Boolean
+    private external fun nativeNoteOff(channel: Int, key: Int): Boolean
+    private external fun nativeRenderAudio(output: ShortArray, frames: Int): Boolean
     private external fun nativeClose()
 
     private var audioTrack: AudioTrack? = null
     private var audioThread: Thread? = null
     private var audioRunning = false
     private var soundFontLoaded = false
+    private var keyboardOpen = false
 
     private lateinit var status: TextView
 
@@ -56,6 +53,23 @@ class MainActivity : Activity() {
 
         window.statusBarColor = backgroundColor
         window.navigationBarColor = backgroundColor
+
+        showMainScreen()
+
+        val initialized = nativeInit(SAMPLE_RATE)
+
+        if (initialized) {
+            status.text =
+                "FLUIDSYNTH: ${nativeFluidSynthVersion()}\nAGUARDANDO SOUNDFONT"
+            status.setTextColor(Color.GREEN)
+        } else {
+            status.text = "ERRO AO INICIALIZAR FLUIDSYNTH"
+            status.setTextColor(Color.RED)
+        }
+    }
+
+    private fun showMainScreen() {
+        keyboardOpen = false
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -84,20 +98,19 @@ class MainActivity : Activity() {
             openSoundFontPicker()
         }
 
+        addButton(layout, "VIRTUAL KEYBOARD - 88 KEYS") {
+            showKeyboardScreen()
+        }
+
         addButton(layout, "TOCAR DÓ4") {
-            if (soundFontLoaded) {
-                nativeNoteOn(0, 60, 100)
-            }
+            if (soundFontLoaded) nativeNoteOn(0, 60, 100)
         }
 
         addButton(layout, "PARAR DÓ4") {
-            if (soundFontLoaded) {
-                nativeNoteOff(0, 60)
-            }
+            if (soundFontLoaded) nativeNoteOff(0, 60)
         }
 
         addButton(layout, "INSTRUMENT LIBRARY") {}
-        addButton(layout, "VIRTUAL KEYBOARD - 88 KEYS") {}
         addButton(layout, "MIXER & EFFECTS") {}
         addButton(layout, "PRESETS") {}
         addButton(layout, "MIDI SETTINGS") {}
@@ -112,16 +125,80 @@ class MainActivity : Activity() {
         layout.addView(status)
 
         setContentView(layout)
+    }
 
-        val initialized = nativeInit(SAMPLE_RATE)
+    private fun showKeyboardScreen() {
+        keyboardOpen = true
 
-        if (initialized) {
-            status.text = "FLUIDSYNTH: ${nativeFluidSynthVersion()}\nAGUARDANDO SOUNDFONT"
-            status.setTextColor(Color.GREEN)
-        } else {
-            status.text = "ERRO AO INICIALIZAR FLUIDSYNTH"
-            status.setTextColor(Color.RED)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 16, 12, 12)
+            setBackgroundColor(backgroundColor)
         }
+
+        val title = TextView(this).apply {
+            text = "VIRTUAL KEYBOARD - 88 KEYS"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 16)
+        }
+        layout.addView(title)
+
+        val instructions = TextView(this).apply {
+            text = if (soundFontLoaded) {
+                "SoundFont carregado • Toque nas teclas para tocar"
+            } else {
+                "Carregue um SoundFont na tela principal"
+            }
+            textSize = 13f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 12)
+        }
+        layout.addView(instructions)
+
+        val keyboard = PianoKeyboardView(
+            this,
+            onNoteOn = { midi, velocity ->
+                if (soundFontLoaded) {
+                    nativeNoteOn(0, midi, velocity)
+                }
+            },
+            onNoteOff = { midi ->
+                if (soundFontLoaded) {
+                    nativeNoteOff(0, midi)
+                }
+            }
+        )
+
+        val scroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = true
+            isFillViewport = false
+            addView(
+                keyboard,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+
+        layout.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        addButton(layout, "VOLTAR À TELA PRINCIPAL") {
+            keyboard.releaseAllNotes()
+            showMainScreen()
+        }
+
+        setContentView(layout)
     }
 
     private fun openSoundFontPicker() {
@@ -153,14 +230,11 @@ class MainActivity : Activity() {
         try {
             val soundFontFile = File(cacheDir, "active_soundfont.sf2")
 
-            val input = contentResolver.openInputStream(uri)
-                ?: throw Exception("Não foi possível abrir o arquivo")
-
-            input.use { source ->
-                soundFontFile.outputStream().use { destination ->
-                    source.copyTo(destination)
+            contentResolver.openInputStream(uri)?.use { input ->
+                soundFontFile.outputStream().use { output ->
+                    input.copyTo(output)
                 }
-            }
+            } ?: throw Exception("Não foi possível abrir o arquivo")
 
             if (soundFontFile.length() == 0L) {
                 throw Exception("Arquivo SoundFont vazio")
@@ -168,15 +242,13 @@ class MainActivity : Activity() {
 
             stopAudio()
 
-            val soundFontId = nativeLoadSoundFont(
-                soundFontFile.absolutePath
-            )
+            val id = nativeLoadSoundFont(soundFontFile.absolutePath)
 
-            if (soundFontId >= 0) {
+            if (id >= 0) {
                 soundFontLoaded = true
                 startAudio()
 
-                status.text = "SOUNDFONT CARREGADO!\nID: $soundFontId"
+                status.text = "SOUNDFONT CARREGADO!\nID: $id"
                 status.setTextColor(Color.GREEN)
             } else {
                 soundFontLoaded = false
@@ -202,29 +274,20 @@ class MainActivity : Activity() {
             return
         }
 
-        val bufferSize = maxOf(
-            minBuffer,
-            BLOCK_FRAMES * 2 * 2 * 4
-        )
+        val bufferSize = maxOf(minBuffer, BLOCK_FRAMES * 2 * 2 * 4)
 
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(
-                        AudioAttributes.CONTENT_TYPE_MUSIC
-                    )
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
             )
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(
-                        AudioFormat.CHANNEL_OUT_STEREO
-                    )
-                    .setEncoding(
-                        AudioFormat.ENCODING_PCM_16BIT
-                    )
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .build()
             )
             .setBufferSizeInBytes(bufferSize)
@@ -233,21 +296,15 @@ class MainActivity : Activity() {
 
         audioTrack = track
         audioRunning = true
-
         track.play()
 
         audioThread = Thread {
             val pcm = ShortArray(BLOCK_FRAMES * 2)
 
             while (audioRunning) {
-                val rendered = nativeRenderAudio(
-                    pcm,
-                    BLOCK_FRAMES
-                )
+                val rendered = nativeRenderAudio(pcm, BLOCK_FRAMES)
 
-                if (!rendered) {
-                    pcm.fill(0)
-                }
+                if (!rendered) pcm.fill(0)
 
                 track.write(
                     pcm,
@@ -280,7 +337,6 @@ class MainActivity : Activity() {
                 it.stop()
             } catch (_: Exception) {
             }
-
             it.release()
         }
 
@@ -307,6 +363,15 @@ class MainActivity : Activity() {
         }
 
         layout.addView(button, params)
+    }
+
+    @Deprecated("Using legacy back callback for compatibility")
+    override fun onBackPressed() {
+        if (keyboardOpen) {
+            showMainScreen()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     override fun onDestroy() {
