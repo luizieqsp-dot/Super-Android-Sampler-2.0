@@ -52,11 +52,19 @@ class MainActivity : Activity() {
     private var audioTrack: AudioTrack? = null
     private var audioThread: Thread? = null
     private var audioRunning = false
+
     private var soundFontLoaded = false
     private var keyboardOpen = false
     private var libraryOpen = false
 
+    private var activeSoundFontId = -1
+    private var showOnlyFavorites = false
+
     private lateinit var status: TextView
+
+    private val presetPrefs by lazy {
+        getSharedPreferences("sampler_presets", MODE_PRIVATE)
+    }
 
     private val backgroundColor = Color.rgb(18, 20, 28)
     private val accentColor = Color.rgb(91, 110, 245)
@@ -135,9 +143,17 @@ class MainActivity : Activity() {
             showInstrumentLibrary()
         }
 
-        addButton(layout, "MIXER & EFFECTS") {}
-        addButton(layout, "PRESETS") {}
-        addButton(layout, "MIDI SETTINGS") {}
+        addButton(layout, "MIXER & EFFECTS") {
+            showComingSoon("MIXER & EFFECTS")
+        }
+
+        addButton(layout, "PRESETS") {
+            showPresetManager()
+        }
+
+        addButton(layout, "MIDI SETTINGS") {
+            showComingSoon("MIDI SETTINGS")
+        }
 
         status = TextView(this).apply {
             text = if (soundFontLoaded) {
@@ -151,6 +167,40 @@ class MainActivity : Activity() {
             setPadding(0, 30, 0, 0)
         }
         layout.addView(status)
+
+        setContentView(layout)
+    }
+
+    private fun showComingSoon(module: String) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 20, 20, 20)
+            setBackgroundColor(backgroundColor)
+        }
+
+        val title = TextView(this).apply {
+            text = module
+            textSize = 23f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 20)
+        }
+
+        layout.addView(title)
+
+        val message = TextView(this).apply {
+            text = "MÓDULO EM DESENVOLVIMENTO"
+            textSize = 16f
+            setTextColor(Color.YELLOW)
+            gravity = Gravity.CENTER
+            setPadding(0, 30, 0, 30)
+        }
+
+        layout.addView(message)
+
+        addButton(layout, "VOLTAR") {
+            showMainScreen()
+        }
 
         setContentView(layout)
     }
@@ -221,6 +271,7 @@ class MainActivity : Activity() {
 
                                 if (selected) {
                                     soundFontLoaded = true
+                                    activeSoundFontId = id
 
                                     info.text = "SoundFont ativo: $name"
                                     status.text = "SOUNDFONT ATIVO: $name"
@@ -404,6 +455,13 @@ class MainActivity : Activity() {
                                     )
 
                                     if (selected) {
+                                        presetPrefs.edit()
+                                            .putInt("last_soundfont", activeSoundFontId)
+                                            .putInt("last_bank", bank)
+                                            .putInt("last_program", program)
+                                            .putString("last_name", instrumentName)
+                                            .apply()
+
                                         info.text =
                                             "Instrumento selecionado: $instrumentName"
 
@@ -426,6 +484,179 @@ class MainActivity : Activity() {
         }
 
         addButton(layout, "VOLTAR À TELA PRINCIPAL") {
+            showMainScreen()
+        }
+
+        setContentView(layout)
+    }
+
+    private fun showPresetManager() {
+        keyboardOpen = false
+        libraryOpen = true
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 12)
+            setBackgroundColor(backgroundColor)
+        }
+
+        val title = TextView(this).apply {
+            text = "PRESET MANAGER"
+            textSize = 23f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 12, 0, 16)
+        }
+        layout.addView(title)
+
+        val info = TextView(this).apply {
+            text = "Gerenciamento de instrumentos"
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 12)
+        }
+        layout.addView(info)
+
+        addButton(layout, "MOSTRAR TODOS / FAVORITOS") {
+            showOnlyFavorites = !showOnlyFavorites
+            showPresetManager()
+        }
+
+        val scroll = ScrollView(this)
+
+        val presetList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        scroll.addView(presetList)
+
+        layout.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        if (!soundFontLoaded) {
+            info.text = "Carregue um SoundFont primeiro."
+        } else {
+            try {
+                val presets = nativeGetPresets()
+
+                val favorites = presetPrefs.getStringSet(
+                    "favorites",
+                    emptySet()
+                )?.toMutableSet() ?: mutableSetOf()
+
+                val validPresets = presets.mapNotNull { preset ->
+                    val parts = preset.split("|", limit = 3)
+
+                    if (parts.size != 3) return@mapNotNull null
+
+                    val bank = parts[0].toIntOrNull()
+                        ?: return@mapNotNull null
+
+                    val program = parts[1].toIntOrNull()
+                        ?: return@mapNotNull null
+
+                    Triple(bank, program, parts[2])
+                }
+
+                val visiblePresets = validPresets.filter { item ->
+                    val key =
+                        "${activeSoundFontId}|${item.first}|${item.second}"
+
+                    !showOnlyFavorites || favorites.contains(key)
+                }
+
+                info.text =
+                    "${visiblePresets.size} instrumentos disponíveis"
+
+                if (visiblePresets.isEmpty()) {
+                    val empty = TextView(this).apply {
+                        text = if (showOnlyFavorites) {
+                            "Nenhum favorito salvo."
+                        } else {
+                            "Nenhum preset encontrado."
+                        }
+                        setTextColor(Color.LTGRAY)
+                        gravity = Gravity.CENTER
+                        setPadding(12, 24, 12, 24)
+                    }
+                    presetList.addView(empty)
+                }
+
+                visiblePresets.forEach { item ->
+                    val bank = item.first
+                    val program = item.second
+                    val name = item.third
+
+                    val key =
+                        "${activeSoundFontId}|$bank|$program"
+
+                    addButton(presetList, name) {
+                        val selected = nativeSelectPreset(
+                            0,
+                            bank,
+                            program
+                        )
+
+                        if (selected) {
+                            presetPrefs.edit()
+                                .putInt("last_soundfont", activeSoundFontId)
+                                .putInt("last_bank", bank)
+                                .putInt("last_program", program)
+                                .putString("last_name", name)
+                                .apply()
+
+                            info.text = "TIMBRE ATIVO: $name"
+                            status.text = "PRESET ATIVO: $name"
+                            status.setTextColor(Color.GREEN)
+                        } else {
+                            info.text =
+                                "Não foi possível selecionar: $name"
+                        }
+                    }
+
+                    val isFavorite = favorites.contains(key)
+
+                    addButton(
+                        presetList,
+                        if (isFavorite) {
+                            "★ REMOVER DOS FAVORITOS"
+                        } else {
+                            "☆ ADICIONAR AOS FAVORITOS"
+                        }
+                    ) {
+                        val updated = presetPrefs.getStringSet(
+                            "favorites",
+                            emptySet()
+                        )?.toMutableSet() ?: mutableSetOf()
+
+                        if (updated.contains(key)) {
+                            updated.remove(key)
+                        } else {
+                            updated.add(key)
+                        }
+
+                        presetPrefs.edit()
+                            .putStringSet("favorites", updated)
+                            .apply()
+
+                        showPresetManager()
+                    }
+                }
+
+            } catch (e: Exception) {
+                info.text = "Erro ao carregar presets: ${e.message}"
+            }
+        }
+
+        addButton(layout, "VOLTAR À TELA PRINCIPAL") {
+            showOnlyFavorites = false
             showMainScreen()
         }
 
@@ -529,6 +760,7 @@ class MainActivity : Activity() {
 
             if (id >= 0) {
                 loadedCount++
+                activeSoundFontId = id
             }
         }
 
@@ -541,11 +773,37 @@ class MainActivity : Activity() {
                 "$loadedCount SOUNDFONT(S) RESTAURADO(S)"
 
             status.setTextColor(Color.GREEN)
+
+            restoreLastPreset()
         } else {
             soundFontLoaded = false
+            activeSoundFontId = -1
 
             status.text = "AGUARDANDO SOUNDFONT"
             status.setTextColor(Color.YELLOW)
+        }
+    }
+
+    private fun restoreLastPreset() {
+        val savedSoundFont = presetPrefs.getInt("last_soundfont", -1)
+        val bank = presetPrefs.getInt("last_bank", -1)
+        val program = presetPrefs.getInt("last_program", -1)
+        val name = presetPrefs.getString("last_name", null)
+
+        if (savedSoundFont == activeSoundFontId &&
+            bank >= 0 &&
+            program >= 0
+        ) {
+            val restored = nativeSelectPreset(
+                0,
+                bank,
+                program
+            )
+
+            if (restored && name != null) {
+                status.text = "PRESET RESTAURADO: $name"
+                status.setTextColor(Color.GREEN)
+            }
         }
     }
 
@@ -581,6 +839,7 @@ class MainActivity : Activity() {
 
             if (id >= 0) {
                 soundFontLoaded = true
+                activeSoundFontId = id
 
                 if (audioTrack == null) {
                     startAudio()
