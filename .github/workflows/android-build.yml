@@ -31,9 +31,9 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Instalar Android SDK 35
+      - name: Instalar SDK, NDK e CMake
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Compilar APK
         run: gradle assembleDebug
