@@ -9,6 +9,7 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -40,7 +41,6 @@ class MainActivity : Activity() {
 
     private external fun nativeGetPresets(): Array<String>
     private external fun nativeGetSoundFonts(): Array<String>
-
     private external fun nativeSelectSoundFont(soundFontId: Int): Boolean
 
     private external fun nativeSelectPreset(
@@ -73,8 +73,11 @@ class MainActivity : Activity() {
 
         if (initialized) {
             status.text =
-                "FLUIDSYNTH: ${nativeFluidSynthVersion()}\nAGUARDANDO SOUNDFONT"
+                "FLUIDSYNTH: ${nativeFluidSynthVersion()}\nVERIFICANDO BIBLIOTECAS..."
+
             status.setTextColor(Color.GREEN)
+
+            restoreSoundFonts()
         } else {
             status.text = "ERRO AO INICIALIZAR FLUIDSYNTH"
             status.setTextColor(Color.RED)
@@ -454,11 +457,111 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun getOriginalFileName(uri: Uri): String {
+        var name: String? = null
+
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(
+                    OpenableColumns.DISPLAY_NAME
+                )
+
+                if (index >= 0) {
+                    name = cursor.getString(index)
+                }
+            }
+        }
+
+        return name ?: "SoundFont.sf2"
+    }
+
+    private fun createUniqueSoundFontFile(
+        directory: File,
+        originalName: String
+    ): File {
+        val safeName = originalName
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+        val baseName = if (safeName.lowercase().endsWith(".sf2")) {
+            safeName.dropLast(4)
+        } else {
+            safeName
+        }
+
+        var destination = File(directory, "$baseName.sf2")
+        var counter = 2
+
+        while (destination.exists()) {
+            destination = File(
+                directory,
+                "${baseName}_$counter.sf2"
+            )
+            counter++
+        }
+
+        return destination
+    }
+
+    private fun restoreSoundFonts() {
+        val directory = File(filesDir, "soundfonts")
+
+        if (!directory.exists()) {
+            directory.mkdirs()
+        }
+
+        val soundFonts = directory.listFiles()
+            ?.filter {
+                it.isFile && it.extension.equals("sf2", true)
+            }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+
+        var loadedCount = 0
+
+        soundFonts.forEach { file ->
+            val id = nativeLoadSoundFont(file.absolutePath)
+
+            if (id >= 0) {
+                loadedCount++
+            }
+        }
+
+        if (loadedCount > 0) {
+            soundFontLoaded = true
+
+            startAudio()
+
+            status.text =
+                "$loadedCount SOUNDFONT(S) RESTAURADO(S)"
+
+            status.setTextColor(Color.GREEN)
+        } else {
+            soundFontLoaded = false
+
+            status.text = "AGUARDANDO SOUNDFONT"
+            status.setTextColor(Color.YELLOW)
+        }
+    }
+
     private fun copyAndLoadSoundFont(uri: Uri) {
         try {
-            val soundFontFile = File(
-                cacheDir,
-                "soundfont_${System.currentTimeMillis()}.sf2"
+            val directory = File(filesDir, "soundfonts")
+
+            if (!directory.exists() && !directory.mkdirs()) {
+                throw Exception("Não foi possível criar a pasta")
+            }
+
+            val originalName = getOriginalFileName(uri)
+
+            val soundFontFile = createUniqueSoundFontFile(
+                directory,
+                originalName
             )
 
             contentResolver.openInputStream(uri)?.use { input ->
@@ -468,25 +571,32 @@ class MainActivity : Activity() {
             } ?: throw Exception("Não foi possível abrir o arquivo")
 
             if (soundFontFile.length() == 0L) {
+                soundFontFile.delete()
                 throw Exception("Arquivo SoundFont vazio")
             }
 
-            stopAudio()
-
-            val id = nativeLoadSoundFont(soundFontFile.absolutePath)
+            val id = nativeLoadSoundFont(
+                soundFontFile.absolutePath
+            )
 
             if (id >= 0) {
                 soundFontLoaded = true
-                startAudio()
 
-                status.text = "SOUNDFONT CARREGADO!\nID: $id"
+                if (audioTrack == null) {
+                    startAudio()
+                }
+
+                status.text =
+                    "SOUNDFONT SALVO!\n${soundFontFile.name}\nID: $id"
+
                 status.setTextColor(Color.GREEN)
 
                 if (libraryOpen) {
                     showSoundFontManager()
                 }
             } else {
-                soundFontLoaded = false
+                soundFontFile.delete()
+
                 status.text = "ERRO AO CARREGAR SOUNDFONT"
                 status.setTextColor(Color.RED)
             }
@@ -498,6 +608,8 @@ class MainActivity : Activity() {
     }
 
     private fun startAudio() {
+        if (audioTrack != null) return
+
         val minBuffer = AudioTrack.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_OUT_STEREO,
@@ -572,6 +684,7 @@ class MainActivity : Activity() {
                 it.stop()
             } catch (_: Exception) {
             }
+
             it.release()
         }
 
