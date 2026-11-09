@@ -37,7 +37,11 @@ class MainActivity : Activity() {
     private external fun nativeNoteOff(channel: Int, key: Int): Boolean
     private external fun nativeRenderAudio(output: ShortArray, frames: Int): Boolean
     private external fun nativeClose()
+
     private external fun nativeGetPresets(): Array<String>
+    private external fun nativeGetSoundFonts(): Array<String>
+
+    private external fun nativeSelectSoundFont(soundFontId: Int): Boolean
 
     private external fun nativeSelectPreset(
         channel: Int,
@@ -108,6 +112,10 @@ class MainActivity : Activity() {
             openSoundFontPicker()
         }
 
+        addButton(layout, "SOUNDFONT MANAGER") {
+            showSoundFontManager()
+        }
+
         addButton(layout, "VIRTUAL KEYBOARD - 88 KEYS") {
             showKeyboardScreen()
         }
@@ -140,6 +148,104 @@ class MainActivity : Activity() {
             setPadding(0, 30, 0, 0)
         }
         layout.addView(status)
+
+        setContentView(layout)
+    }
+
+    private fun showSoundFontManager() {
+        keyboardOpen = false
+        libraryOpen = true
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 12)
+            setBackgroundColor(backgroundColor)
+        }
+
+        val title = TextView(this).apply {
+            text = "SOUNDFONT MANAGER"
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 12, 0, 16)
+        }
+        layout.addView(title)
+
+        val info = TextView(this).apply {
+            text = "Bibliotecas de áudio carregadas"
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 12)
+        }
+        layout.addView(info)
+
+        val scroll = ScrollView(this)
+
+        val fontList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        scroll.addView(fontList)
+
+        layout.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        try {
+            val fonts = nativeGetSoundFonts()
+
+            if (fonts.isEmpty()) {
+                info.text = "Nenhum SoundFont carregado."
+            } else {
+                info.text = "${fonts.size} SoundFont(s) carregado(s)"
+
+                fonts.forEach { font ->
+                    val parts = font.split("|", limit = 2)
+
+                    if (parts.size == 2) {
+                        val id = parts[0].toIntOrNull()
+                        val name = parts[1]
+
+                        if (id != null) {
+                            addButton(fontList, "SELECIONAR: $name") {
+                                val selected = nativeSelectSoundFont(id)
+
+                                if (selected) {
+                                    soundFontLoaded = true
+
+                                    info.text = "SoundFont ativo: $name"
+                                    status.text = "SOUNDFONT ATIVO: $name"
+                                    status.setTextColor(Color.GREEN)
+                                } else {
+                                    info.text =
+                                        "Não foi possível selecionar: $name"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            info.text = "Erro ao consultar bibliotecas: ${e.message}"
+        }
+
+        addButton(layout, "CARREGAR OUTRO SOUNDFONT") {
+            openSoundFontPicker()
+        }
+
+        addButton(layout, "ABRIR INSTRUMENT LIBRARY") {
+            showInstrumentLibrary()
+        }
+
+        addButton(layout, "VOLTAR À TELA PRINCIPAL") {
+            showMainScreen()
+        }
 
         setContentView(layout)
     }
@@ -350,7 +456,10 @@ class MainActivity : Activity() {
 
     private fun copyAndLoadSoundFont(uri: Uri) {
         try {
-            val soundFontFile = File(cacheDir, "active_soundfont.sf2")
+            val soundFontFile = File(
+                cacheDir,
+                "soundfont_${System.currentTimeMillis()}.sf2"
+            )
 
             contentResolver.openInputStream(uri)?.use { input ->
                 soundFontFile.outputStream().use { output ->
@@ -372,6 +481,10 @@ class MainActivity : Activity() {
 
                 status.text = "SOUNDFONT CARREGADO!\nID: $id"
                 status.setTextColor(Color.GREEN)
+
+                if (libraryOpen) {
+                    showSoundFontManager()
+                }
             } else {
                 soundFontLoaded = false
                 status.text = "ERRO AO CARREGAR SOUNDFONT"
