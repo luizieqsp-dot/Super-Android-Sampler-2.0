@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
 
@@ -36,20 +37,20 @@ class MainActivity : Activity() {
     private external fun nativeNoteOff(channel: Int, key: Int): Boolean
     private external fun nativeRenderAudio(output: ShortArray, frames: Int): Boolean
     private external fun nativeClose()
-
     private external fun nativeGetPresets(): Array<String>
 
-private external fun nativeSelectPreset(
-    channel: Int,
-    bank: Int,
-    program: Int
-): Boolean
+    private external fun nativeSelectPreset(
+        channel: Int,
+        bank: Int,
+        program: Int
+    ): Boolean
 
     private var audioTrack: AudioTrack? = null
     private var audioThread: Thread? = null
     private var audioRunning = false
     private var soundFontLoaded = false
     private var keyboardOpen = false
+    private var libraryOpen = false
 
     private lateinit var status: TextView
 
@@ -78,6 +79,7 @@ private external fun nativeSelectPreset(
 
     private fun showMainScreen() {
         keyboardOpen = false
+        libraryOpen = false
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -118,13 +120,20 @@ private external fun nativeSelectPreset(
             if (soundFontLoaded) nativeNoteOff(0, 60)
         }
 
-        addButton(layout, "INSTRUMENT LIBRARY") {}
+        addButton(layout, "INSTRUMENT LIBRARY") {
+            showInstrumentLibrary()
+        }
+
         addButton(layout, "MIXER & EFFECTS") {}
         addButton(layout, "PRESETS") {}
         addButton(layout, "MIDI SETTINGS") {}
 
         status = TextView(this).apply {
-            text = "INICIALIZANDO FLUIDSYNTH..."
+            text = if (soundFontLoaded) {
+                "SOUNDFONT CARREGADO"
+            } else {
+                "INICIALIZANDO FLUIDSYNTH..."
+            }
             textSize = 14f
             setTextColor(Color.YELLOW)
             gravity = Gravity.CENTER
@@ -137,6 +146,7 @@ private external fun nativeSelectPreset(
 
     private fun showKeyboardScreen() {
         keyboardOpen = true
+        libraryOpen = false
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -203,6 +213,110 @@ private external fun nativeSelectPreset(
 
         addButton(layout, "VOLTAR À TELA PRINCIPAL") {
             keyboard.releaseAllNotes()
+            showMainScreen()
+        }
+
+        setContentView(layout)
+    }
+
+    private fun showInstrumentLibrary() {
+        keyboardOpen = false
+        libraryOpen = true
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 12)
+            setBackgroundColor(backgroundColor)
+        }
+
+        val title = TextView(this).apply {
+            text = "INSTRUMENT LIBRARY"
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 12, 0, 16)
+        }
+        layout.addView(title)
+
+        val info = TextView(this).apply {
+            text = "Selecione um instrumento do SoundFont"
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 12)
+        }
+        layout.addView(info)
+
+        val scroll = ScrollView(this)
+
+        val instrumentList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        scroll.addView(instrumentList)
+
+        layout.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        if (!soundFontLoaded) {
+            info.text = "Carregue um SoundFont na tela principal."
+        } else {
+            try {
+                val presets = nativeGetPresets()
+
+                if (presets.isEmpty()) {
+                    info.text = "Nenhum instrumento encontrado."
+                } else {
+                    info.text = "${presets.size} instrumentos encontrados"
+
+                    presets.forEach { preset ->
+                        val parts = preset.split("|", limit = 3)
+
+                        if (parts.size == 3) {
+                            val bank = parts[0].toIntOrNull()
+                            val program = parts[1].toIntOrNull()
+                            val instrumentName = parts[2]
+
+                            if (bank != null && program != null) {
+                                addButton(
+                                    instrumentList,
+                                    instrumentName
+                                ) {
+                                    val selected = nativeSelectPreset(
+                                        0,
+                                        bank,
+                                        program
+                                    )
+
+                                    if (selected) {
+                                        info.text =
+                                            "Instrumento selecionado: $instrumentName"
+
+                                        status.text =
+                                            "TIMBRE ATIVO: $instrumentName"
+                                        status.setTextColor(Color.GREEN)
+                                    } else {
+                                        info.text =
+                                            "Não foi possível selecionar o instrumento."
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                info.text =
+                    "Erro ao consultar instrumentos: ${e.message}"
+            }
+        }
+
+        addButton(layout, "VOLTAR À TELA PRINCIPAL") {
             showMainScreen()
         }
 
@@ -375,7 +489,7 @@ private external fun nativeSelectPreset(
 
     @Deprecated("Using legacy back callback for compatibility")
     override fun onBackPressed() {
-        if (keyboardOpen) {
+        if (keyboardOpen || libraryOpen) {
             showMainScreen()
         } else {
             super.onBackPressed()
