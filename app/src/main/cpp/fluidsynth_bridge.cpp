@@ -9,6 +9,12 @@ static fluid_settings_t* gSettings = nullptr;
 static fluid_synth_t* gSynth = nullptr;
 static int gSoundFontId = -1;
 
+struct SoundFontInfo {
+    int id;
+    std::string name;
+};
+
+static std::vector<SoundFontInfo> gSoundFonts;
 static std::mutex gMutex;
 
 extern "C" {
@@ -22,6 +28,7 @@ Java_com_samplers_android_MainActivity_nativeFluidSynthVersion(
 JNIEXPORT jboolean JNICALL
 Java_com_samplers_android_MainActivity_nativeInit(
         JNIEnv* env, jobject thiz, jint sampleRate) {
+
     std::lock_guard<std::mutex> lock(gMutex);
 
     if (gSynth != nullptr) {
@@ -35,6 +42,8 @@ Java_com_samplers_android_MainActivity_nativeInit(
     }
 
     gSoundFontId = -1;
+    gSoundFonts.clear();
+
     gSettings = new_fluid_settings();
 
     if (gSettings == nullptr) return JNI_FALSE;
@@ -57,6 +66,7 @@ Java_com_samplers_android_MainActivity_nativeInit(
 JNIEXPORT jint JNICALL
 Java_com_samplers_android_MainActivity_nativeLoadSoundFont(
         JNIEnv* env, jobject thiz, jstring path) {
+
     if (path == nullptr) return -1;
 
     const char* filePath = env->GetStringUTFChars(path, nullptr);
@@ -68,17 +78,89 @@ Java_com_samplers_android_MainActivity_nativeLoadSoundFont(
 
     if (gSynth != nullptr) {
         result = fluid_synth_sfload(gSynth, filePath, 1);
-        gSoundFontId = result;
+
+        if (result >= 0) {
+            std::string fullPath(filePath);
+            size_t separator = fullPath.find_last_of("/\\");
+            std::string name = separator == std::string::npos
+                    ? fullPath
+                    : fullPath.substr(separator + 1);
+
+            gSoundFonts.push_back({result, name});
+            gSoundFontId = result;
+        }
     }
 
     env->ReleaseStringUTFChars(path, filePath);
     return result;
 }
 
+// Retorna todos os SoundFonts carregados.
+// Formato: ID|NOME
+JNIEXPORT jobjectArray JNICALL
+Java_com_samplers_android_MainActivity_nativeGetSoundFonts(
+        JNIEnv* env, jobject thiz) {
+
+    std::vector<std::string> fonts;
+
+    {
+        std::lock_guard<std::mutex> lock(gMutex);
+
+        for (const auto& font : gSoundFonts) {
+            fonts.push_back(
+                std::to_string(font.id) + "|" + font.name
+            );
+        }
+    }
+
+    jclass stringClass = env->FindClass("java/lang/String");
+
+    if (stringClass == nullptr) return nullptr;
+
+    jobjectArray result = env->NewObjectArray(
+        static_cast<jsize>(fonts.size()),
+        stringClass,
+        nullptr
+    );
+
+    if (result == nullptr) return nullptr;
+
+    for (size_t i = 0; i < fonts.size(); i++) {
+        jstring item = env->NewStringUTF(fonts[i].c_str());
+        env->SetObjectArrayElement(result, i, item);
+        env->DeleteLocalRef(item);
+    }
+
+    return result;
+}
+
+// Seleciona um SoundFont já carregado.
+JNIEXPORT jboolean JNICALL
+Java_com_samplers_android_MainActivity_nativeSelectSoundFont(
+        JNIEnv* env, jobject thiz, jint soundFontId) {
+
+    std::lock_guard<std::mutex> lock(gMutex);
+
+    if (gSynth == nullptr) return JNI_FALSE;
+
+    for (const auto& font : gSoundFonts) {
+        if (font.id == soundFontId) {
+            gSoundFontId = soundFontId;
+
+            return fluid_synth_program_select(
+                gSynth, 0, gSoundFontId, 0, 0
+            ) == FLUID_OK ? JNI_TRUE : JNI_FALSE;
+        }
+    }
+
+    return JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_samplers_android_MainActivity_nativeNoteOn(
         JNIEnv* env, jobject thiz,
         jint channel, jint key, jint velocity) {
+
     std::lock_guard<std::mutex> lock(gMutex);
 
     if (gSynth == nullptr || gSoundFontId < 0) return JNI_FALSE;
@@ -89,7 +171,9 @@ Java_com_samplers_android_MainActivity_nativeNoteOn(
 
 JNIEXPORT jboolean JNICALL
 Java_com_samplers_android_MainActivity_nativeNoteOff(
-        JNIEnv* env, jobject thiz, jint channel, jint key) {
+        JNIEnv* env, jobject thiz,
+        jint channel, jint key) {
+
     std::lock_guard<std::mutex> lock(gMutex);
 
     if (gSynth == nullptr) return JNI_FALSE;
@@ -102,6 +186,7 @@ JNIEXPORT jboolean JNICALL
 Java_com_samplers_android_MainActivity_nativeRenderAudio(
         JNIEnv* env, jobject thiz,
         jshortArray output, jint frames) {
+
     if (output == nullptr || frames <= 0) return JNI_FALSE;
     if (env->GetArrayLength(output) < frames * 2) return JNI_FALSE;
 
@@ -121,6 +206,7 @@ Java_com_samplers_android_MainActivity_nativeRenderAudio(
     }
 
     env->ReleaseShortArrayElements(output, samples, 0);
+
     return success ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -133,45 +219,40 @@ Java_com_samplers_android_MainActivity_nativeGetPresets(
     {
         std::lock_guard<std::mutex> lock(gMutex);
 
-        if (gSynth == nullptr || gSoundFontId < 0) {
-            return env->NewObjectArray(
-                0, env->FindClass("java/lang/String"), nullptr
-            );
-        }
+        if (gSynth != nullptr && gSoundFontId >= 0) {
+            fluid_sfont_t* soundFont =
+                fluid_synth_get_sfont_by_id(gSynth, gSoundFontId);
 
-        fluid_sfont_t* soundFont =
-            fluid_synth_get_sfont_by_id(gSynth, gSoundFontId);
+            if (soundFont != nullptr) {
+                fluid_sfont_iteration_start(soundFont);
 
-        if (soundFont == nullptr) {
-            return env->NewObjectArray(
-                0, env->FindClass("java/lang/String"), nullptr
-            );
-        }
+                fluid_preset_t* preset;
 
-        fluid_sfont_iteration_start(soundFont);
+                while ((preset = fluid_sfont_iteration_next(soundFont)) != nullptr) {
+                    int bank = fluid_preset_get_banknum(preset);
+                    int program = fluid_preset_get_num(preset);
+                    const char* name = fluid_preset_get_name(preset);
 
-        fluid_preset_t* preset;
-
-        while ((preset = fluid_sfont_iteration_next(soundFont)) != nullptr) {
-            int bank = fluid_preset_get_banknum(preset);
-            int program = fluid_preset_get_num(preset);
-            const char* name = fluid_preset_get_name(preset);
-
-            presets.push_back(
-                std::to_string(bank) + "|" +
-                std::to_string(program) + "|" +
-                (name != nullptr ? name : "Instrumento")
-            );
+                    presets.push_back(
+                        std::to_string(bank) + "|" +
+                        std::to_string(program) + "|" +
+                        (name != nullptr ? name : "Instrumento")
+                    );
+                }
+            }
         }
     }
 
     jclass stringClass = env->FindClass("java/lang/String");
+    if (stringClass == nullptr) return nullptr;
 
     jobjectArray result = env->NewObjectArray(
         static_cast<jsize>(presets.size()),
         stringClass,
         nullptr
     );
+
+    if (result == nullptr) return nullptr;
 
     for (size_t i = 0; i < presets.size(); i++) {
         jstring item = env->NewStringUTF(presets[i].c_str());
@@ -201,6 +282,7 @@ Java_com_samplers_android_MainActivity_nativeSelectPreset(
 JNIEXPORT void JNICALL
 Java_com_samplers_android_MainActivity_nativeClose(
         JNIEnv* env, jobject thiz) {
+
     std::lock_guard<std::mutex> lock(gMutex);
 
     if (gSynth != nullptr) {
@@ -214,6 +296,7 @@ Java_com_samplers_android_MainActivity_nativeClose(
     }
 
     gSoundFontId = -1;
+    gSoundFonts.clear();
 }
 
 }
